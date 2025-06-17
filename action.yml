@@ -12,6 +12,9 @@ inputs:
   assignee_trigger:
     description: "The assignee username that triggers the action (e.g. @claude)"
     required: false
+  base_branch:
+    description: "The branch to use as the base/source when creating new branches (defaults to repository default branch)"
+    required: false
 
   # Claude Code configuration
   model:
@@ -36,6 +39,12 @@ inputs:
     description: "Direct instruction for Claude (bypasses normal trigger detection)"
     required: false
     default: ""
+  mcp_config:
+    description: "Additional MCP configuration (JSON string) that merges with the built-in GitHub MCP servers"
+  claude_env:
+    description: "Custom environment variables to pass to Claude Code execution (YAML format)"
+    required: false
+    default: ""
 
   # Auth configuration
   anthropic_api_key:
@@ -53,6 +62,10 @@ inputs:
     required: false
     default: "false"
 
+  max_turns:
+    description: "Maximum number of conversation turns"
+    required: false
+    default: ""
   timeout_minutes:
     description: "Timeout in minutes for execution"
     required: false
@@ -74,41 +87,49 @@ runs:
     - name: Install Dependencies
       shell: bash
       run: |
-        cd ${{ github.action_path }}
+        cd ${GITHUB_ACTION_PATH}
         bun install
 
     - name: Prepare action
       id: prepare
       shell: bash
       run: |
-        bun run ${{ github.action_path }}/src/entrypoints/prepare.ts
+        bun run ${GITHUB_ACTION_PATH}/src/entrypoints/prepare.ts
       env:
         TRIGGER_PHRASE: ${{ inputs.trigger_phrase }}
         ASSIGNEE_TRIGGER: ${{ inputs.assignee_trigger }}
+        BASE_BRANCH: ${{ inputs.base_branch }}
         ALLOWED_TOOLS: ${{ inputs.allowed_tools }}
+        DISALLOWED_TOOLS: ${{ inputs.disallowed_tools }}
         CUSTOM_INSTRUCTIONS: ${{ inputs.custom_instructions }}
         DIRECT_PROMPT: ${{ inputs.direct_prompt }}
+        MCP_CONFIG: ${{ inputs.mcp_config }}
         OVERRIDE_GITHUB_TOKEN: ${{ inputs.github_token }}
         GITHUB_RUN_ID: ${{ github.run_id }}
 
     - name: Run Claude Code
       id: claude-code
       if: steps.prepare.outputs.contains_trigger == 'true'
-      uses: anthropics/claude-code-base-action@5097b6cdfe5fc5a3ac0166cc344c34ed23c93982 # https://github.com/anthropics/claude-code-base-action/releases/tag/v0.0.5
+      uses: anthropics/claude-code-base-action@f481f924b73a7085d9efea0e50a3ba171ed1d74b # v0.0.20
       with:
-        prompt_file: /tmp/claude-prompts/claude-prompt.txt
+        prompt_file: ${{ runner.temp }}/claude-prompts/claude-prompt.txt
         allowed_tools: ${{ env.ALLOWED_TOOLS }}
         disallowed_tools: ${{ env.DISALLOWED_TOOLS }}
         timeout_minutes: ${{ inputs.timeout_minutes }}
+        max_turns: ${{ inputs.max_turns }}
         model: ${{ inputs.model || inputs.anthropic_model }}
         mcp_config: ${{ steps.prepare.outputs.mcp_config }}
         use_bedrock: ${{ inputs.use_bedrock }}
         use_vertex: ${{ inputs.use_vertex }}
         anthropic_api_key: ${{ inputs.anthropic_api_key }}
+        claude_env: ${{ inputs.claude_env }}
       env:
         # Model configuration
         ANTHROPIC_MODEL: ${{ inputs.model || inputs.anthropic_model }}
         GITHUB_TOKEN: ${{ steps.prepare.outputs.GITHUB_TOKEN }}
+
+        # Provider configuration
+        ANTHROPIC_BASE_URL: ${{ env.ANTHROPIC_BASE_URL }}
 
         # AWS configuration
         AWS_REGION: ${{ env.AWS_REGION }}
@@ -132,7 +153,7 @@ runs:
       if: steps.prepare.outputs.contains_trigger == 'true' && steps.prepare.outputs.claude_comment_id && always()
       shell: bash
       run: |
-        bun run ${{ github.action_path }}/src/entrypoints/update-comment-link.ts
+        bun run ${GITHUB_ACTION_PATH}/src/entrypoints/update-comment-link.ts
       env:
         REPOSITORY: ${{ github.repository }}
         PR_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
@@ -143,10 +164,12 @@ runs:
         TRIGGER_COMMENT_ID: ${{ github.event.comment.id }}
         CLAUDE_BRANCH: ${{ steps.prepare.outputs.CLAUDE_BRANCH }}
         IS_PR: ${{ github.event.issue.pull_request != null || github.event_name == 'pull_request_review_comment' }}
-        DEFAULT_BRANCH: ${{ steps.prepare.outputs.DEFAULT_BRANCH }}
+        BASE_BRANCH: ${{ steps.prepare.outputs.BASE_BRANCH }}
         CLAUDE_SUCCESS: ${{ steps.claude-code.outputs.conclusion == 'success' }}
         OUTPUT_FILE: ${{ steps.claude-code.outputs.execution_file || '' }}
         TRIGGER_USERNAME: ${{ github.event.comment.user.login || github.event.issue.user.login || github.event.pull_request.user.login || github.event.sender.login || github.triggering_actor || github.actor || '' }}
+        PREPARE_SUCCESS: ${{ steps.prepare.outcome == 'success' }}
+        PREPARE_ERROR: ${{ steps.prepare.outputs.prepare_error || '' }}
 
     - name: Display Claude Code Report
       if: steps.prepare.outputs.contains_trigger == 'true' && steps.claude-code.outputs.execution_file != ''
