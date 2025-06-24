@@ -116,7 +116,7 @@ export async function fetchGitHubData({
         // Use git hash-object to compute the SHA for the current file content
         const sha = execSync(`git hash-object "${file.path}"`, {
           encoding: "utf-8",
-          maxBuffer: 1024 * 1024 * 2, // ERR_CHILD_PROCESS_STDIO_MAXBUFFERに対応 デフォルト値は1024 * 1024 (1MB)
+          maxBuffer: 1024 * 1024 * 4, // ERR_CHILD_PROCESS_STDIO_MAXBUFFERに対応 デフォルト値は1024 * 1024 (1MB)
         }).trim();
         return {
           ...file,
